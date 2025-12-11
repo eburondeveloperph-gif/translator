@@ -94,9 +94,9 @@ export default function StreamingConsole() {
           },
         },
       },
-      inputAudioTranscription: { model: "google_speech" },
-      outputAudioTranscription: { model: "google_speech" },
-      // Corrected: systemInstruction should be a string for live.connect
+      // Updated to use empty objects as per latest API spec for default models
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
       systemInstruction: systemPrompt, 
     };
 
