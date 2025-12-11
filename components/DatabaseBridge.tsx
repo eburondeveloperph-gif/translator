@@ -179,19 +179,21 @@ export default function DatabaseBridge() {
             console.warn("Timeout waiting for audio response from model. Moving to next chunk.");
           }
 
-          // 3. STRICT SEQUENCING: Wait until audio is almost finished
+          // 3. STRICT SEQUENCING: Wait until audio is FULLY finished
           // The user requested "not allowed to skip turns" and "one audio playing in one time".
-          // We wait until the buffer is very low (0.2s) before starting the next cycle.
-          // This prevents overlapping and ensures the system doesn't run ahead.
+          // We wait until the duration is practically zero.
           while (true) {
              const state = getAudioStreamerState();
-             if (state.duration < 0.2) {
+             if (state.duration <= 0.05) {
                 break;
              }
-             await new Promise(resolve => setTimeout(resolve, 200));
+             await new Promise(resolve => setTimeout(resolve, 100));
           }
 
-          // 4. Save Translation to Supabase
+          // 4. Add 0.5s gap before next speaker/turn as requested
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          // 5. Save Translation to Supabase
           if (item.refData && currentTranslationBufferRef.current.trim().length > 0) {
             try {
               await supabase.from('translations').insert({
@@ -245,11 +247,6 @@ export default function DatabaseBridge() {
       if (segments.length > 0) {
         segments.forEach((seg, index) => {
            // We associate all segments of this source with the same UI Turn ID
-           // In a more granular system, we might create turns for each segment,
-           // but keeping context together is usually better for reading.
-           // However, if we want strict videoke sync, maybe 1 segment = 1 turn is better?
-           // For now, let's update the single block. The translation buffer appends.
-           
            queueRef.current.push({ text: seg, refData: data, turnId });
            
            paragraphCountRef.current += 1;
