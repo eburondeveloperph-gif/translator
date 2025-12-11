@@ -26,24 +26,17 @@ import {
 export class AudioStreamer {
   private sampleRate: number = 24000;
   private bufferSize: number = 7680;
-  // A queue of audio buffers to be played. Each buffer is a Float32Array.
   private audioQueue: Float32Array[] = [];
   private isPlaying: boolean = false;
-  // Indicates if the stream has finished playing, e.g., interrupted.
-  private isStreamComplete: boolean = false;
-  private checkInterval: number | null = null;
   private scheduledTime: number = 0;
-  private initialBufferTime: number = 0.1; //0.1 // 100ms initial buffer
+  private initialBufferTime: number = 0.1;
   
-  // Web Audio API nodes. source => gain => destination
   public gainNode: GainNode;
   public source: AudioBufferSourceNode;
   
-  // Track active sources to stop them individually without destroying the graph
   private activeSources: Set<AudioBufferSourceNode> = new Set();
   
   private endOfQueueAudioSource: AudioBufferSourceNode | null = null;
-  private keepAliveOscillator: OscillatorNode | null = null;
 
   // Ambient Pad Components
   private padGain: GainNode | null = null;
@@ -57,75 +50,42 @@ export class AudioStreamer {
     this.source = this.context.createBufferSource();
     this.gainNode.connect(this.context.destination);
     this.addPCM16 = this.addPCM16.bind(this);
-    
-    // Start Keep-Alive to prevent background suspension
-    this.startKeepAlive();
   }
 
-  private startKeepAlive() {
-    // Plays a silent/inaudible sound to keep the audio context active in background
-    try {
-      const oscillator = this.context.createOscillator();
-      const gain = this.context.createGain();
-      
-      oscillator.type = 'sine';
-      oscillator.frequency.value = 1; // 1 Hz (inaudible)
-      
-      // Extremely low gain, just enough to be "active" but effectively silent
-      gain.gain.value = 0.001; 
-      
-      oscillator.connect(gain);
-      gain.connect(this.context.destination);
-      
-      oscillator.start();
-      this.keepAliveOscillator = oscillator;
-    } catch (e) {
-      console.warn('Failed to start keep-alive oscillator', e);
-    }
-  }
-
-  // --- Ambient Pad Logic ---
   setPadVolume(volume: number) {
     if (this.padGain) {
-      // Ramp to new volume for smooth transition
       this.padGain.gain.linearRampToValueAtTime(volume, this.context.currentTime + 0.5);
     }
   }
 
   startPad(volume: number) {
-    if (this.padGain) return; // Already running
+    if (this.padGain) return;
 
     const now = this.context.currentTime;
     
-    // Master gain for the pad
     this.padGain = this.context.createGain();
-    this.padGain.gain.value = 0; // Start silent for fade-in
+    this.padGain.gain.value = 0;
     
-    // Lowpass filter to make it "warm" and non-intrusive
     this.padFilter = this.context.createBiquadFilter();
     this.padFilter.type = 'lowpass';
-    this.padFilter.frequency.value = 400; // Muffled, warm sound
+    this.padFilter.frequency.value = 400;
     this.padFilter.Q.value = 1;
 
-    // Chain: Oscs -> Filter -> PadGain -> MainGain (so muting works)
     this.padFilter.connect(this.padGain);
     this.padGain.connect(this.gainNode);
 
-    // D Major / D drone (D3, A3, D4) - Neutral, hopeful, authoritative
     const freqs = [146.83, 220.00, 293.66]; 
     
     freqs.forEach(f => {
       const osc = this.context.createOscillator();
-      osc.type = 'triangle'; // Triangle is softer than saw, richer than sine
+      osc.type = 'triangle';
       osc.frequency.value = f;
-      // Detune slightly for "chorus" effect
       osc.detune.value = (Math.random() * 10) - 5; 
       osc.connect(this.padFilter!);
       osc.start();
       this.padOscillators.push(osc);
     });
 
-    // Fade in over 2 seconds
     this.padGain.gain.linearRampToValueAtTime(volume, now + 2);
   }
 
@@ -133,11 +93,14 @@ export class AudioStreamer {
     if (!this.padGain) return;
     const now = this.context.currentTime;
     
-    // Fade out
     this.padGain.gain.linearRampToValueAtTime(0, now + 2);
     
     setTimeout(() => {
-      this.padOscillators.forEach(o => o.stop());
+      this.padOscillators.forEach(o => {
+        try {
+          o.stop();
+        } catch(e) {}
+      });
       this.padOscillators = [];
       this.padGain?.disconnect();
       this.padFilter?.disconnect();
@@ -145,7 +108,6 @@ export class AudioStreamer {
       this.padFilter = null;
     }, 2000);
   }
-  // -------------------------
 
   async addWorklet<T extends (d: any) => void>(
     workletName: string,
@@ -154,8 +116,6 @@ export class AudioStreamer {
   ): Promise<this> {
     let workletsRecord = registeredWorklets.get(this.context);
     if (workletsRecord && workletsRecord[workletName]) {
-      // the worklet already exists on this context
-      // add the new handler to it
       workletsRecord[workletName].handlers.push(handler);
       return Promise.resolve(this);
     }
@@ -165,14 +125,12 @@ export class AudioStreamer {
       workletsRecord = registeredWorklets.get(this.context)!;
     }
 
-    // create new record to fill in as becomes available
     workletsRecord[workletName] = { handlers: [handler] };
 
     const src = createWorketFromSrc(workletName, workletSrc);
     await this.context.audioWorklet.addModule(src);
     const worklet = new AudioWorkletNode(this.context, workletName);
 
-    //add the node into the map
     workletsRecord[workletName].node = worklet;
 
     return this;
@@ -194,7 +152,6 @@ export class AudioStreamer {
   }
 
   addPCM16(chunk: Uint8Array) {
-    this.isStreamComplete = false;
     let processingBuffer = this._processPCM16Chunk(chunk);
     while (processingBuffer.length >= this.bufferSize) {
       const buffer = processingBuffer.slice(0, this.bufferSize);
@@ -204,9 +161,12 @@ export class AudioStreamer {
     if (processingBuffer.length > 0) {
       this.audioQueue.push(processingBuffer);
     }
+    
     if (!this.isPlaying) {
       this.isPlaying = true;
-      this.scheduledTime = this.context.currentTime + this.initialBufferTime;
+      if (this.scheduledTime < this.context.currentTime) {
+         this.scheduledTime = this.context.currentTime + this.initialBufferTime;
+      }
       this.scheduleNextBuffer();
     }
   }
@@ -222,6 +182,8 @@ export class AudioStreamer {
   }
 
   private scheduleNextBuffer() {
+    if (!this.isPlaying) return;
+
     const SCHEDULE_AHEAD_TIME = 0.2;
 
     while (
@@ -232,30 +194,15 @@ export class AudioStreamer {
       const audioBuffer = this.createAudioBuffer(audioData);
       const source = this.context.createBufferSource();
 
-      // Track this source
       this.activeSources.add(source);
 
-      if (this.audioQueue.length === 0) {
-        if (this.endOfQueueAudioSource) {
-          this.endOfQueueAudioSource.onended = null;
+      source.onended = () => {
+        this.activeSources.delete(source);
+        if (this.activeSources.size === 0 && this.audioQueue.length === 0) {
+          this.isPlaying = false;
+          this.onComplete();
         }
-        this.endOfQueueAudioSource = source;
-        source.onended = () => {
-          this.activeSources.delete(source);
-          if (
-            !this.audioQueue.length &&
-            this.endOfQueueAudioSource === source
-          ) {
-            this.endOfQueueAudioSource = null;
-            this.onComplete();
-          }
-        };
-      } else {
-        // Standard cleanup for non-end chunks
-        source.onended = () => {
-          this.activeSources.delete(source);
-        };
-      }
+      };
 
       source.buffer = audioBuffer;
       source.connect(this.gainNode);
@@ -282,72 +229,35 @@ export class AudioStreamer {
       this.scheduledTime = startTime + audioBuffer.duration;
     }
 
-    if (this.audioQueue.length === 0) {
-      if (this.isStreamComplete) {
-        this.isPlaying = false;
-        if (this.checkInterval) {
-          clearInterval(this.checkInterval);
-          this.checkInterval = null;
-        }
-      } else {
-        if (!this.checkInterval) {
-          this.checkInterval = window.setInterval(() => {
-            if (this.audioQueue.length > 0) {
-              this.scheduleNextBuffer();
-            }
-          }, 100) as unknown as number;
-        }
-      }
-    } else {
-      const nextCheckTime =
-        (this.scheduledTime - this.context.currentTime) * 1000;
-      setTimeout(
-        () => this.scheduleNextBuffer(),
-        Math.max(0, nextCheckTime - 50)
-      );
+    if (this.audioQueue.length > 0 || this.activeSources.size > 0) {
+      setTimeout(() => this.scheduleNextBuffer(), 100);
     }
   }
 
   stop() {
     this.isPlaying = false;
-    this.isStreamComplete = true;
     this.audioQueue = [];
     
-    // Stop all currently playing sources smoothly
     this.activeSources.forEach(source => {
       try {
         source.stop();
       } catch (e) {
-        // Ignore errors if source is already stopped
       }
     });
     this.activeSources.clear();
-
-    // Reset scheduling time
     this.scheduledTime = this.context.currentTime;
-    
-    // NOTE: We do NOT call stopPad() here anymore. 
-    // The background ambience should persist during speech interruptions.
-
-    if (this.checkInterval) {
-      clearInterval(this.checkInterval);
-      this.checkInterval = null;
-    }
-    
-    // We do NOT disconnect the gainNode anymore to prevent breaking the graph
   }
 
   async resume() {
     if (this.context.state === 'suspended') {
       await this.context.resume();
     }
-    this.isStreamComplete = false;
-    this.scheduledTime = this.context.currentTime + this.initialBufferTime;
     this.gainNode.gain.setValueAtTime(1, this.context.currentTime);
+    this.scheduledTime = this.context.currentTime + this.initialBufferTime;
   }
 
   complete() {
-    this.isStreamComplete = true;
+    this.isPlaying = false;
     this.onComplete();
   }
 }

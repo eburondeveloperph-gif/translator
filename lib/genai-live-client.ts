@@ -20,51 +20,27 @@ import { DEFAULT_LIVE_API_MODEL } from './constants';
 import { difference } from 'lodash';
 import { base64ToArrayBuffer } from './utils';
 
-/**
- * Represents a single log entry in the system.
- * Used for tracking and displaying system events, messages, and errors.
- */
 export interface StreamingLog {
-  // Optional count for repeated log entries
   count?: number;
-  // Optional additional data associated with the log
   data?: unknown;
-  // Timestamp of when the log was created
   date: Date;
-  // The log message content
   message: string | object;
-  // The type/category of the log entry
   type: string;
 }
 
-/**
- * Event types that can be emitted by the MultimodalLiveClient.
- * Each event corresponds to a specific message from GenAI or client state change.
- */
 export interface LiveClientEventTypes {
-  // Emitted when audio data is received
   audio: (data: ArrayBuffer) => void;
-  // Emitted when the connection closes
   close: (event: CloseEvent) => void;
-  // Emitted when content is received from the server
   content: (data: LiveServerContent) => void;
-  // Emitted when an error occurs
   error: (e: ErrorEvent) => void;
-  // Emitted when the server interrupts the current generation
   interrupted: () => void;
-  // Emitted for logging events
   log: (log: StreamingLog) => void;
-  // Emitted when the connection opens
   open: () => void;
-  // Emitted when the initial setup is complete
   setupcomplete: () => void;
-  // Emitted when a tool call is received
   toolcall: (toolCall: LiveServerToolCall) => void;
-  // Emitted when a tool call is cancelled
   toolcallcancellation: (
     toolcallCancellation: LiveServerToolCallCancellation
   ) => void;
-  // Emitted when the current turn is complete
   turncomplete: () => void;
   inputTranscription: (text: string, isFinal: boolean) => void;
   outputTranscription: (text: string, isFinal: boolean) => void;
@@ -82,11 +58,6 @@ export class GenAILiveClient {
     return this._status;
   }
 
-  /**
-   * Creates a new GenAILiveClient instance.
-   * @param apiKey - API key for authentication with Google GenAI
-   * @param model - Optional model name to override the default model
-   */
   constructor(apiKey: string, model?: string) {
     if (model) this.model = model;
 
@@ -133,7 +104,6 @@ export class GenAILiveClient {
         callbacks,
       });
     } catch (e: any) {
-      // Retry logic for 503 Service Unavailable or similar transient errors
       if (e.message?.includes('unavailable') || e.message?.includes('503')) {
         console.warn('GenAI Live API Unavailable. Retrying in 1s...');
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -151,7 +121,7 @@ export class GenAILiveClient {
           const errorEvent = new ErrorEvent('error', {
             error: retryError,
             message: retryError?.message || 'Failed to connect after retry.',
-          });
+          } as any);
           this.onError(errorEvent);
           return false;
         }
@@ -162,7 +132,7 @@ export class GenAILiveClient {
         const errorEvent = new ErrorEvent('error', {
           error: e,
           message: e?.message || 'Failed to connect.',
-        });
+        } as any);
         this.onError(errorEvent);
         return false;
       }
@@ -183,11 +153,12 @@ export class GenAILiveClient {
 
   public send(parts: Part | Part[], turnComplete: boolean = true) {
     if (this._status !== 'connected' || !this.session) {
-      this.emitter.emit('error', new ErrorEvent('Client is not connected'));
+      this.emitter.emit(
+        'error',
+        new ErrorEvent('error', { message: 'Client is not connected' })
+      );
       return;
     }
-    // FIX: Structure the content as a Content object with explicit role: 'user'.
-    // The API requires 'role' to be set, otherwise it may throw "Internal error encountered".
     const content: Content = {
       role: 'user',
       parts: Array.isArray(parts) ? parts : [parts],
@@ -199,7 +170,10 @@ export class GenAILiveClient {
 
   public sendRealtimeInput(chunks: Array<{ mimeType: string; data: string }>) {
     if (this._status !== 'connected' || !this.session) {
-      this.emitter.emit('error', new ErrorEvent('Client is not connected'));
+      this.emitter.emit(
+        'error',
+        new ErrorEvent('error', { message: 'Client is not connected' })
+      );
       return;
     }
     chunks.forEach(chunk => {
@@ -224,7 +198,10 @@ export class GenAILiveClient {
 
   public sendToolResponse(toolResponse: LiveClientToolResponse) {
     if (this._status !== 'connected' || !this.session) {
-      this.emitter.emit('error', new ErrorEvent('Client is not connected'));
+      this.emitter.emit(
+        'error',
+        new ErrorEvent('error', { message: 'Client is not connected' })
+      );
       return;
     }
     if (
@@ -350,11 +327,6 @@ export class GenAILiveClient {
     this.emitter.emit('close', e);
   }
 
-  /**
-   * Internal method to emit a log event.
-   * @param type - Log type
-   * @param message - Log message
-   */
   protected log(type: string, message: string | object) {
     this.emitter.emit('log', {
       type,
