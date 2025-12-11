@@ -204,7 +204,7 @@ header .header-right {
 
 .console-box {
   width: 100%;
-  max-width: 800px;
+  max-width: 900px;
   height: 100%;
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
@@ -220,52 +220,68 @@ header .header-right {
   justify-content: center;
 }
 
-/* Teleprompter Mode Styles */
-.transcription-view.teleprompter-mode {
+/* Videoke / Subtitle Mode Styles */
+.console-box.videoke-mode {
+  background: black; /* High contrast */
+  border: none;
+}
+
+.transcription-view.subtitle-mode {
   width: 100%;
   height: 100%;
   overflow-y: auto;
-  padding: 1.5rem;
+  padding: 2rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
-  /* Smooth scroll behavior */
+  gap: 2.5rem;
   scroll-behavior: smooth;
-  /* Add padding at bottom so last item can be centered */
-  padding-bottom: 20vh;
+  padding-bottom: 25vh; /* Allow centering last item */
 }
 
-.transcription-view.teleprompter-mode .transcription-entry {
-  opacity: 0.7;
-  transition: opacity 0.5s ease;
+.subtitle-wrapper {
+  text-align: center;
+  animation: fadeIn 0.5s ease-out;
 }
 
-.transcription-view.teleprompter-mode .transcription-entry:last-child {
-  opacity: 1; /* Highlight current */
+.subtitle-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
 }
 
-.script-line {
-  font-family: 'Georgia', serif; /* Script font */
-  font-size: 1.1rem; /* Smaller text size as requested */
-  line-height: 1.6;
-  text-align: left; /* Better for reading blocks */
-}
-
-.script-direction {
-  display: block;
-  font-size: 0.9rem;
-  color: var(--accent-blue);
+.subtitle-source {
+  font-size: 1.2rem;
+  color: var(--text-secondary);
   font-style: italic;
-  margin-bottom: 0.25rem;
-  font-family: 'Google Sans Display', sans-serif;
-  opacity: 0.8;
-}
-
-.script-spoken {
-  color: var(--text-main);
   font-weight: 400;
+  opacity: 0.6;
 }
 
+.subtitle-translation {
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: var(--text-main);
+  line-height: 1.2;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  font-family: 'Google Sans Display', sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Highlights recent items */
+.subtitle-wrapper:last-child .subtitle-translation {
+  color: var(--accent-blue);
+  /* Optional glow */
+  text-shadow: 0 0 20px rgba(31, 148, 255, 0.4);
+}
+
+.typing-indicator {
+  display: inline-block;
+  opacity: 0.5;
+  animation: pulse 1s infinite;
+}
+
+
+/* Waiting State */
 .waiting-placeholder {
   display: flex;
   flex-direction: column;
@@ -452,6 +468,11 @@ select, textarea {
   100% { opacity: 0.5; transform: scale(0.95); }
 }
 
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -471,11 +492,10 @@ select, textarea {
     width: 100%; /* Full width on mobile */
   }
   
-  .transcription-view.teleprompter-mode {
-    padding: 1rem;
-    font-size: 1rem;
+  .subtitle-translation {
+    font-size: 1.8rem;
   }
-  
+
   .control-tray {
     bottom: 1.5rem;
   }
@@ -483,10 +503,6 @@ select, textarea {
   .action-button {
     width: 56px; /* Larger touch targets */
     height: 56px;
-  }
-  
-  .script-line {
-    font-size: 1rem;
   }
   
   .tray-select {

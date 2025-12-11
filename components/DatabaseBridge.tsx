@@ -25,11 +25,12 @@ const segmentText = (text: string): string[] => {
 type QueueItem = {
   text: string;
   refData: Transcript | null; // null if system message like (clears throat)
+  turnId?: string; // ID of the UI turn this segment belongs to
 };
 
 export default function DatabaseBridge() {
   const { client, connected, getAudioStreamerState, sendToSpeaker, addOutputListener } = useLiveAPIContext();
-  const { addTurn } = useLogStore();
+  const { addTurn, updateTurn } = useLogStore();
   const { voiceStyle, speechRate, language } = useSettings();
   
   const lastProcessedIdRef = useRef<string | null>(null);
@@ -38,6 +39,9 @@ export default function DatabaseBridge() {
   const voiceStyleRef = useRef(voiceStyle);
   const speechRateRef = useRef(speechRate);
   const languageRef = useRef(language);
+
+  // Track which turn we are currently processing to attach translation
+  const currentTurnIdRef = useRef<string | null>(null);
 
   // Buffer to capture incoming translations for the current turn
   const currentTranslationBufferRef = useRef<string>('');
@@ -55,15 +59,21 @@ export default function DatabaseBridge() {
   }, [language]);
 
   // Hook up listener to capture the model's spoken response text
-  // Using new multi-client listener
   useEffect(() => {
     const removeListener = addOutputListener((text: string, isFinal: boolean) => {
        currentTranslationBufferRef.current += text;
+       
+       // Update the UI turn in real-time
+       if (currentTurnIdRef.current) {
+         updateTurn(currentTurnIdRef.current, { 
+           translation: currentTranslationBufferRef.current 
+         });
+       }
     });
     return () => {
        removeListener();
     };
-  }, [addOutputListener]);
+  }, [addOutputListener, updateTurn]);
 
   // High-performance queue using Refs
   const queueRef = useRef<QueueItem[]>([]);
@@ -90,6 +100,9 @@ export default function DatabaseBridge() {
 
           const item = queueRef.current[0];
           const rawText = item.text;
+
+          // Set current turn context for translation binding
+          currentTurnIdRef.current = item.turnId || null;
           
           // Detect Speaker
           let textToSend = rawText;
@@ -149,11 +162,12 @@ export default function DatabaseBridge() {
           sendToSpeaker(scriptedText, targetSpeaker);
           queueRef.current.shift();
 
-          // 2. Wait for Audio to ARRIVE (Scheduled Time Increases)
+          // 2. Wait for Audio to ARRIVE
           const waitStart = Date.now();
           let audioArrived = false;
           while (Date.now() - waitStart < 15000) {
              const currentState = getAudioStreamerState();
+             // Check if something was added to the audio queue
              if (currentState.endOfQueueTime > preSendState.endOfQueueTime + 0.1) {
                 audioArrived = true;
                 break;
@@ -165,10 +179,13 @@ export default function DatabaseBridge() {
             console.warn("Timeout waiting for audio response from model. Moving to next chunk.");
           }
 
-          // 3. Pipelining Wait: Wait until remaining audio duration is < 3 seconds
+          // 3. STRICT SEQUENCING: Wait until audio is almost finished
+          // The user requested "not allowed to skip turns" and "one audio playing in one time".
+          // We wait until the buffer is very low (0.2s) before starting the next cycle.
+          // This prevents overlapping and ensures the system doesn't run ahead.
           while (true) {
              const state = getAudioStreamerState();
-             if (state.duration < 3.0) {
+             if (state.duration < 0.2) {
                 break;
              }
              await new Promise(resolve => setTimeout(resolve, 200));
@@ -188,6 +205,9 @@ export default function DatabaseBridge() {
               console.error('Failed to save translation:', err);
             }
           }
+          
+          // Clear current turn ref
+          currentTurnIdRef.current = null;
         }
       } catch (e) {
         console.error('Error in processing loop:', e);
@@ -207,10 +227,15 @@ export default function DatabaseBridge() {
       if (lastProcessedIdRef.current === data.id) return;
       lastProcessedIdRef.current = data.id;
       
-      // Update UI
+      const turnId = crypto.randomUUID();
+      
+      // Update UI - Create a turn for this paragraph
+      // We start with empty translation, it will fill as audio plays
       addTurn({
+        id: turnId,
         role: 'system',
         text: source, 
+        translation: '', // Will be streamed
         sourceText: source, 
         isFinal: true
       });
@@ -218,12 +243,18 @@ export default function DatabaseBridge() {
       // Queue Paragraphs
       const segments = segmentText(source);
       if (segments.length > 0) {
-        segments.forEach(seg => {
-           queueRef.current.push({ text: seg, refData: data });
+        segments.forEach((seg, index) => {
+           // We associate all segments of this source with the same UI Turn ID
+           // In a more granular system, we might create turns for each segment,
+           // but keeping context together is usually better for reading.
+           // However, if we want strict videoke sync, maybe 1 segment = 1 turn is better?
+           // For now, let's update the single block. The translation buffer appends.
+           
+           queueRef.current.push({ text: seg, refData: data, turnId });
            
            paragraphCountRef.current += 1;
            if (paragraphCountRef.current > 0 && paragraphCountRef.current % 3 === 0) {
-              queueRef.current.push({ text: '(clears throat)', refData: null });
+              queueRef.current.push({ text: '(clears throat)', refData: null, turnId });
            }
         });
         processQueueLoop();
@@ -271,7 +302,7 @@ export default function DatabaseBridge() {
       worker.terminate();
       supabase.removeChannel(channel);
     };
-  }, [connected, client, addTurn, getAudioStreamerState, sendToSpeaker, addOutputListener]);
+  }, [connected, client, addTurn, updateTurn, getAudioStreamerState, sendToSpeaker, addOutputListener]);
 
   return null;
 }

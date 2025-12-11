@@ -260,9 +260,11 @@ export interface GroundingChunk {
 }
 
 export interface ConversationTurn {
+  id?: string;
   timestamp: Date;
   role: 'user' | 'agent' | 'system';
   text: string;
+  translation?: string;
   sourceText?: string;
   isFinal: boolean;
   toolUseRequest?: LiveServerToolCall;
@@ -274,6 +276,7 @@ export const useLogStore = create<{
   turns: ConversationTurn[];
   addTurn: (turn: Omit<ConversationTurn, 'timestamp'>) => void;
   updateLastTurn: (update: Partial<ConversationTurn>) => void;
+  updateTurn: (id: string, update: Partial<ConversationTurn>) => void;
   clearTurns: () => void;
 }>((set, get) => ({
   turns: [],
@@ -291,6 +294,13 @@ export const useLogStore = create<{
       newTurns[newTurns.length - 1] = lastTurn;
       return { turns: newTurns };
     });
+  },
+  updateTurn: (id: string, update: Partial<ConversationTurn>) => {
+    set(state => ({
+      turns: state.turns.map(turn => 
+        turn.id === id ? { ...turn, ...update } : turn
+      ),
+    }));
   },
   clearTurns: () => set({ turns: [] }),
 }));

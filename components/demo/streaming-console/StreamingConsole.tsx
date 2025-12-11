@@ -12,46 +12,16 @@ import {
   useTools,
 } from '@/lib/state';
 
-// Helper component for Teleprompter Script Effect with Typewriter
-const ScriptReader = memo(({ text }: { text: string }) => {
-  const [displayedText, setDisplayedText] = useState('');
-  
-  useEffect(() => {
-    let index = 0;
-    // Reset when text changes (new log entry usually implies new text)
-    if (text === displayedText) return;
-    
-    // Calculate typing speed - faster for long text to keep up, but minimum readable speed
-    const typingSpeed = 20; 
-
-    const interval = setInterval(() => {
-      setDisplayedText((prev) => {
-        if (index >= text.length) {
-          clearInterval(interval);
-          return text;
-        }
-        index++;
-        return text.slice(0, index);
-      });
-    }, typingSpeed);
-
-    return () => clearInterval(interval);
-  }, [text]);
-
-  // Simple parser to separate stage directions from spoken text
-  // Directions are in parentheses () or brackets []
-  const parts = displayedText.split(/([(\[].*?[)\]])/g);
-
+// Component to render the "Videoke" style text
+const SubtitleText = memo(({ text, translation }: { text: string, translation?: string }) => {
   return (
-    <div className="script-line">
-      {parts.map((part, index) => {
-        if (part.match(/^[(\[].*[)\]]$/)) {
-          // It's a stage direction
-          return <span key={index} className="script-direction">{part}</span>;
-        }
-        // It's spoken text
-        return <span key={index} className="script-spoken">{part}</span>;
-      })}
+    <div className="subtitle-entry">
+      <div className="subtitle-source">
+        {text}
+      </div>
+      <div className="subtitle-translation">
+        {translation || <span className="typing-indicator">...</span>}
+      </div>
     </div>
   );
 });
@@ -120,27 +90,12 @@ export default function StreamingConsole() {
   }, [setConfig, systemPrompt, tools, voice]);
 
   useEffect(() => {
-    const { addTurn, updateLastTurn } = useLogStore.getState();
-
-    // We only care about errors or keeping the connection alive, 
-    // we do NOT want to log the transcription for the user to see in this specific mode.
-    // However, we still listen to maintain protocol state.
-
-    const handleInputTranscription = (text: string, isFinal: boolean) => {
-       // Suppressed for Script View
-    };
-
-    const handleOutputTranscription = (text: string, isFinal: boolean) => {
-       // Suppressed for Script View
-    };
-
-    const handleContent = (serverContent: LiveServerContent) => {
-       // Suppressed for Script View
-    };
-
-    const handleTurnComplete = () => {
-       // Suppressed
-    };
+    // We strictly use DatabaseBridge for UI updates via Supabase
+    // But we need to keep event listeners active for connection health
+    const handleInputTranscription = (text: string, isFinal: boolean) => {};
+    const handleOutputTranscription = (text: string, isFinal: boolean) => {};
+    const handleContent = (serverContent: LiveServerContent) => {};
+    const handleTurnComplete = () => {};
 
     client.on('inputTranscription', handleInputTranscription);
     client.on('outputTranscription', handleOutputTranscription);
@@ -158,9 +113,14 @@ export default function StreamingConsole() {
   // Scroll to bottom when turns change
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      const scrollElement = scrollRef.current;
+      // Use smooth scroll behavior
+      scrollElement.scrollTo({
+        top: scrollElement.scrollHeight,
+        behavior: 'smooth'
+      });
     }
-  });
+  }, [turns]);
 
   // Filter: Only show "system" turns which contain our Script
   const scriptTurns = turns.filter(t => t.role === 'system');
@@ -178,28 +138,11 @@ export default function StreamingConsole() {
             </div>
           </div>
         ) : (
-          <div className="console-box">
-            <div className="transcription-view teleprompter-mode" ref={scrollRef}>
+          <div className="console-box videoke-mode">
+            <div className="transcription-view subtitle-mode" ref={scrollRef}>
               {scriptTurns.map((t, i) => (
-                <div key={i} className="transcription-entry system">
-                  {/* Source Text Rendering */}
-                  {t.sourceText && (
-                    <div className="source-text" style={{ 
-                        fontSize: '0.95rem', 
-                        color: 'var(--text-secondary)', 
-                        marginBottom: '8px',
-                        fontStyle: 'italic',
-                        opacity: 0.8,
-                        borderLeft: '2px solid var(--accent-blue)',
-                        paddingLeft: '8px'
-                      }}>
-                      {t.sourceText}
-                    </div>
-                  )}
-                  {/* Translated Text Rendering */}
-                  <div className="transcription-text-content">
-                    <ScriptReader text={t.text} />
-                  </div>
+                <div key={t.id || i} className="subtitle-wrapper">
+                  <SubtitleText text={t.text} translation={t.translation} />
                 </div>
               ))}
             </div>
