@@ -167,12 +167,12 @@ export default function DatabaseBridge() {
           let audioArrived = false;
           while (Date.now() - waitStart < 15000) {
              const currentState = getAudioStreamerState();
-             // Check if something was added to the audio queue
+             // Check if something was added to the audio queue (with tolerance)
              if (currentState.endOfQueueTime > preSendState.endOfQueueTime + 0.1) {
                 audioArrived = true;
                 break;
              }
-             await new Promise(resolve => setTimeout(resolve, 100));
+             await new Promise(resolve => setTimeout(resolve, 250)); // Slightly more relaxed polling
           }
 
           if (!audioArrived) {
@@ -182,12 +182,15 @@ export default function DatabaseBridge() {
           // 3. STRICT SEQUENCING: Wait until audio is FULLY finished
           // The user requested "not allowed to skip turns" and "one audio playing in one time".
           // We wait until the duration is practically zero.
-          while (true) {
+          // Failsafe: Don't wait forever if something breaks (max 60s per turn)
+          const playStart = Date.now();
+          while (Date.now() - playStart < 60000) {
              const state = getAudioStreamerState();
              if (state.duration <= 0.05) {
                 break;
              }
-             await new Promise(resolve => setTimeout(resolve, 100));
+             // 250ms is safe; in background this might throttle to 1000ms, which is acceptable
+             await new Promise(resolve => setTimeout(resolve, 250)); 
           }
 
           // 4. Add 0.5s gap before next speaker/turn as requested

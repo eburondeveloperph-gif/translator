@@ -199,7 +199,10 @@ export class AudioStreamer {
   private scheduleNextBuffer() {
     if (!this.isPlaying) return;
 
-    const SCHEDULE_AHEAD_TIME = 0.2;
+    // Use a larger lookahead (2.5s) to allow for browser throttling in the background.
+    // Main thread timers can be throttled to 1s when backgrounded, so we must queue 
+    // more than 1s of audio to prevent stuttering.
+    const SCHEDULE_AHEAD_TIME = 2.5;
 
     while (
       this.audioQueue.length > 0 &&
