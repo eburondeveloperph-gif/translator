@@ -21,6 +21,7 @@
 import ControlTray from './components/console/control-tray/ControlTray';
 import ErrorScreen from './components/demo/ErrorScreen';
 import StreamingConsole from './components/demo/streaming-console/StreamingConsole';
+import BottomVisualizer from './components/visualizer/BottomVisualizer';
 
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
@@ -57,6 +58,7 @@ function App() {
             </div>
 
             <ControlTray></ControlTray>
+            <BottomVisualizer />
           </main>
         </div>
       </LiveAPIProvider>
