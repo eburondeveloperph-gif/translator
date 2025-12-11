@@ -30,6 +30,7 @@ export class AudioStreamer {
   private isPlaying: boolean = false;
   private scheduledTime: number = 0;
   private initialBufferTime: number = 0.1;
+  private checkTimeout: number | null = null;
   
   public gainNode: GainNode;
   public source: AudioBufferSourceNode;
@@ -164,6 +165,7 @@ export class AudioStreamer {
     
     if (!this.isPlaying) {
       this.isPlaying = true;
+      // Reset scheduled time if it fell behind
       if (this.scheduledTime < this.context.currentTime) {
          this.scheduledTime = this.context.currentTime + this.initialBufferTime;
       }
@@ -199,6 +201,7 @@ export class AudioStreamer {
       source.onended = () => {
         this.activeSources.delete(source);
         if (this.activeSources.size === 0 && this.audioQueue.length === 0) {
+          // Only stop if we are truly empty
           this.isPlaying = false;
           this.onComplete();
         }
@@ -224,18 +227,23 @@ export class AudioStreamer {
         });
       }
       
+      // Ensure we don't schedule in the past
       const startTime = Math.max(this.scheduledTime, this.context.currentTime);
       source.start(startTime);
       this.scheduledTime = startTime + audioBuffer.duration;
     }
 
     if (this.audioQueue.length > 0 || this.activeSources.size > 0) {
-      setTimeout(() => this.scheduleNextBuffer(), 100);
+      this.checkTimeout = window.setTimeout(() => this.scheduleNextBuffer(), 100);
     }
   }
 
   stop() {
     this.isPlaying = false;
+    if (this.checkTimeout) {
+      clearTimeout(this.checkTimeout);
+      this.checkTimeout = null;
+    }
     this.audioQueue = [];
     
     this.activeSources.forEach(source => {
@@ -258,6 +266,10 @@ export class AudioStreamer {
 
   complete() {
     this.isPlaying = false;
+    if (this.checkTimeout) {
+      clearTimeout(this.checkTimeout);
+      this.checkTimeout = null;
+    }
     this.onComplete();
   }
 }

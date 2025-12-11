@@ -91,7 +91,7 @@ export default function DatabaseBridge() {
           // This loop is purely for feeding audio to the model.
 
           // Send to Gemini Live to read
-          // client.send() is void but safe due to check above
+          // sending text implicitly acts as "continue reading"
           client.send([{ text: scriptedText }]);
 
           // Remove the item we just sent
@@ -120,6 +120,12 @@ export default function DatabaseBridge() {
           // Wait before processing next chunk
           await new Promise(resolve => setTimeout(resolve, totalDelay));
         }
+
+        // If queue is empty and we are still connected, send stop signal
+        if (client.status === 'connected') {
+          client.send([{ text: '(stop)' }]);
+        }
+
       } catch (e) {
         console.error('Error in processing loop:', e);
       } finally {
