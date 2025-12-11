@@ -15,6 +15,7 @@ export default function Sidebar() {
     language, setLanguage, 
     voice, setVoice, 
     voiceStyle, setVoiceStyle,
+    speechRate, setSpeechRate,
     backgroundPadEnabled, setBackgroundPadEnabled,
     backgroundPadVolume, setBackgroundPadVolume
   } = useSettings();
@@ -138,13 +139,8 @@ export default function Sidebar() {
                 </select>
               </div>
 
-              <div>
+              <div style={{marginBottom: '1rem'}}>
                 <label style={{display: 'block', marginBottom: '8px', fontSize: '0.85rem'}}>Voice Style</label>
-                {/* Reverted to Select for simplicity or keeping text input as per previous request? 
-                    The previous request asked for text input. I will preserve the text input from previous state 
-                    but since I don't see the text input code in the 'existing file' provided in the PROMPT (it showed the old Select), 
-                    I will re-implement the Text Input to respect the user's previous desire. 
-                */}
                 <input
                   type="text"
                   value={voiceStyle}
@@ -152,6 +148,24 @@ export default function Sidebar() {
                   placeholder="e.g. Soft and engaging"
                   style={{width: '100%'}}
                 />
+              </div>
+
+              <div>
+                <label style={{display: 'block', marginBottom: '8px', fontSize: '0.85rem'}}>Reading Speed: {speechRate}x</label>
+                <input 
+                    type="range" 
+                    min="0.5" 
+                    max="2.0" 
+                    step="0.1" 
+                    value={speechRate}
+                    onChange={(e) => setSpeechRate(parseFloat(e.target.value))}
+                    style={{width: '100%', cursor: 'pointer'}}
+                 />
+                 <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px'}}>
+                   <span>Slow</span>
+                   <span>Normal</span>
+                   <span>Fast</span>
+                 </div>
               </div>
 
               <div style={{marginTop: '20px', padding: '12px', background: 'var(--bg-panel-secondary)', borderRadius: '8px', fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic'}}>

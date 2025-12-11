@@ -28,15 +28,21 @@ const segmentText = (text: string): string[] => {
 export default function DatabaseBridge() {
   const { client, connected } = useLiveAPIContext();
   const { addTurn } = useLogStore();
-  const { voiceStyle } = useSettings();
+  const { voiceStyle, speechRate } = useSettings();
   
   const lastProcessedIdRef = useRef<string | null>(null);
   const paragraphCountRef = useRef<number>(0);
   
   const voiceStyleRef = useRef(voiceStyle);
+  const speechRateRef = useRef(speechRate);
+
   useEffect(() => {
     voiceStyleRef.current = voiceStyle;
   }, [voiceStyle]);
+
+  useEffect(() => {
+    speechRateRef.current = speechRate;
+  }, [speechRate]);
 
   // High-performance queue using Refs to handle data spikes without re-renders
   const queueRef = useRef<string[]>([]);
@@ -65,6 +71,7 @@ export default function DatabaseBridge() {
 
           const rawText = queueRef.current[0];
           const style = voiceStyleRef.current;
+          const rate = speechRateRef.current;
 
           // Inject Stage Directions based on selected Style
           let scriptedText = rawText;
@@ -114,7 +121,11 @@ export default function DatabaseBridge() {
             if (style === 'natural') bufferBase = 1000;
             if (style === 'dramatic') bufferBase = 3000;
             
-            totalDelay = Math.min(5000, readTime * 0.5) + bufferBase;
+            // Calculate base delay
+            let baseDelay = Math.min(5000, readTime * 0.5) + bufferBase;
+            
+            // Adjust for reading speed (faster speed = less delay)
+            totalDelay = baseDelay / rate;
           }
           
           // Wait before processing next chunk

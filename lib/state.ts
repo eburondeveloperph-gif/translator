@@ -14,9 +14,18 @@ export type Template = 'eburon-tts';
 export type Theme = 'light' | 'dark';
 export type VoiceStyle = 'natural' | 'breathy' | 'dramatic';
 
-const generateSystemPrompt = (language: string) => `
+const generateSystemPrompt = (language: string, speed: number = 1.0) => {
+  let speedInstruction = "PACE: Natural, conversational speed.";
+  if (speed < 1.0) {
+    speedInstruction = `PACE: Slower than normal (${speed}x). Enunciate clearly and take your time.`;
+  } else if (speed > 1.0) {
+    speedInstruction = `PACE: Faster than normal (${speed}x). Speak quickly and efficiently.`;
+  }
+
+  return `
 ROLE: Elite Simultaneous Interpreter & Voice Actor
 TARGET LANGUAGE: [${language || 'Taglish (Philippines)'}]
+${speedInstruction}
 
 OBJECTIVE:
 Translate the incoming text segments into [${language}] immediately. 
@@ -44,6 +53,7 @@ VOICE PERSONA (The Charismatic Orator):
 
 Translate and perform the text now.
 `;
+};
 
 /**
  * Settings
@@ -54,6 +64,7 @@ export const useSettings = create<{
   voice: string;
   voiceStyle: VoiceStyle;
   language: string;
+  speechRate: number;
   backgroundPadEnabled: boolean;
   backgroundPadVolume: number;
   setSystemPrompt: (prompt: string) => void;
@@ -61,11 +72,13 @@ export const useSettings = create<{
   setVoice: (voice: string) => void;
   setVoiceStyle: (style: VoiceStyle) => void;
   setLanguage: (language: string) => void;
+  setSpeechRate: (rate: number) => void;
   setBackgroundPadEnabled: (enabled: boolean) => void;
   setBackgroundPadVolume: (volume: number) => void;
 }>(set => ({
   language: 'Taglish (Philippines)',
-  systemPrompt: generateSystemPrompt('Taglish (Philippines)'),
+  speechRate: 1.0,
+  systemPrompt: generateSystemPrompt('Taglish (Philippines)', 1.0),
   model: DEFAULT_LIVE_API_MODEL,
   voice: DEFAULT_VOICE,
   voiceStyle: 'breathy',
@@ -75,7 +88,14 @@ export const useSettings = create<{
   setModel: model => set({ model }),
   setVoice: voice => set({ voice }),
   setVoiceStyle: voiceStyle => set({ voiceStyle }),
-  setLanguage: language => set({ language, systemPrompt: generateSystemPrompt(language) }),
+  setLanguage: language => set(state => ({ 
+    language, 
+    systemPrompt: generateSystemPrompt(language, state.speechRate) 
+  })),
+  setSpeechRate: rate => set(state => ({ 
+    speechRate: rate, 
+    systemPrompt: generateSystemPrompt(state.language, rate) 
+  })),
   setBackgroundPadEnabled: enabled => set({ backgroundPadEnabled: enabled }),
   setBackgroundPadVolume: volume => set({ backgroundPadVolume: volume }),
 }));
