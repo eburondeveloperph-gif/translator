@@ -22,16 +22,25 @@ const segmentText = (text: string): string[] => {
   return text.split(/\r?\n+/).map(t => t.trim()).filter(t => t.length > 0);
 };
 
+type QueueItem = {
+  text: string;
+  refData: Transcript | null; // null if system message like (clears throat)
+};
+
 export default function DatabaseBridge() {
   const { client, connected, getAudioStreamerState } = useLiveAPIContext();
   const { addTurn } = useLogStore();
-  const { voiceStyle, speechRate } = useSettings();
+  const { voiceStyle, speechRate, language } = useSettings();
   
   const lastProcessedIdRef = useRef<string | null>(null);
   const paragraphCountRef = useRef<number>(0);
   
   const voiceStyleRef = useRef(voiceStyle);
   const speechRateRef = useRef(speechRate);
+  const languageRef = useRef(language);
+
+  // Buffer to capture incoming translations for the current turn
+  const currentTranslationBufferRef = useRef<string>('');
 
   useEffect(() => {
     voiceStyleRef.current = voiceStyle;
@@ -41,8 +50,24 @@ export default function DatabaseBridge() {
     speechRateRef.current = speechRate;
   }, [speechRate]);
 
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
+
+  // Hook up listener to capture the model's spoken response text
+  useEffect(() => {
+    const handleOutputTranscription = (text: string, isFinal: boolean) => {
+      currentTranslationBufferRef.current += text;
+    };
+
+    client.on('outputTranscription', handleOutputTranscription);
+    return () => {
+      client.off('outputTranscription', handleOutputTranscription);
+    };
+  }, [client]);
+
   // High-performance queue using Refs
-  const queueRef = useRef<string[]>([]);
+  const queueRef = useRef<QueueItem[]>([]);
   const isProcessingRef = useRef(false);
 
   // Data Ingestion & Processing Logic
@@ -64,7 +89,8 @@ export default function DatabaseBridge() {
             return;
           }
 
-          const rawText = queueRef.current[0];
+          const item = queueRef.current[0];
+          const rawText = item.text;
           const style = voiceStyleRef.current;
           
           let scriptedText = rawText;
@@ -80,6 +106,9 @@ export default function DatabaseBridge() {
             queueRef.current.shift();
             continue;
           }
+
+          // Reset translation buffer for this new segment
+          currentTranslationBufferRef.current = '';
 
           // Capture audio state BEFORE sending
           const preSendState = getAudioStreamerState();
@@ -119,6 +148,24 @@ export default function DatabaseBridge() {
              }
              await new Promise(resolve => setTimeout(resolve, 200));
           }
+
+          // 4. Save Translation to Supabase
+          // We save whatever text we captured in the buffer during this processing window.
+          // Note: This relies on the outputTranscription arriving roughly while we wait for audio.
+          // Since we wait for audio to arrive + some playback time, we likely have the text.
+          if (item.refData && currentTranslationBufferRef.current.trim().length > 0) {
+            try {
+              await supabase.from('translations').insert({
+                meeting_id: item.refData.session_id,
+                user_id: item.refData.user_id,
+                original_text: rawText, // Save the clean original text, not the scripted one
+                translated_text: currentTranslationBufferRef.current.trim(),
+                language: languageRef.current,
+              });
+            } catch (err) {
+              console.error('Failed to save translation:', err);
+            }
+          }
         }
       } catch (e) {
         console.error('Error in processing loop:', e);
@@ -150,10 +197,11 @@ export default function DatabaseBridge() {
       const segments = segmentText(source);
       if (segments.length > 0) {
         segments.forEach(seg => {
-           queueRef.current.push(seg);
+           queueRef.current.push({ text: seg, refData: data });
+           
            paragraphCountRef.current += 1;
            if (paragraphCountRef.current > 0 && paragraphCountRef.current % 3 === 0) {
-              queueRef.current.push('(clears throat)');
+              queueRef.current.push({ text: '(clears throat)', refData: null });
            }
         });
         processQueueLoop();

@@ -18,3 +18,13 @@ export interface Transcript {
   created_at: string;
   updated_at: string;
 }
+
+export interface Translation {
+  id?: string;
+  meeting_id: string;
+  user_id?: string;
+  original_text: string;
+  translated_text: string;
+  language: string;
+  created_at?: string;
+}
