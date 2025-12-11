@@ -54,6 +54,17 @@ export class AudioStreamer {
     this.addPCM16 = this.addPCM16.bind(this);
   }
 
+  // Exposed properties for pipelining
+  public get duration(): number {
+    // If not playing, or if scheduled time is in the past (gap), duration is 0
+    if (!this.isPlaying) return 0;
+    return Math.max(0, this.scheduledTime - this.context.currentTime);
+  }
+
+  public get endOfQueueTime(): number {
+    return this.scheduledTime;
+  }
+
   setPadVolume(volume: number) {
     if (this.padGain) {
       this.padGain.gain.linearRampToValueAtTime(volume, this.context.currentTime + 0.5);

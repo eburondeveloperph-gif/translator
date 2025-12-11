@@ -23,19 +23,13 @@ const segmentText = (text: string): string[] => {
 };
 
 export default function DatabaseBridge() {
-  const { client, connected, isAudioPlaying } = useLiveAPIContext();
+  const { client, connected, getAudioStreamerState } = useLiveAPIContext();
   const { addTurn } = useLogStore();
   const { voiceStyle, speechRate } = useSettings();
   
   const lastProcessedIdRef = useRef<string | null>(null);
   const paragraphCountRef = useRef<number>(0);
   
-  // Track audio state in a ref to access it inside the async loop
-  const isAudioPlayingRef = useRef(isAudioPlaying);
-  useEffect(() => {
-    isAudioPlayingRef.current = isAudioPlaying;
-  }, [isAudioPlaying]);
-
   const voiceStyleRef = useRef(voiceStyle);
   const speechRateRef = useRef(speechRate);
 
@@ -87,36 +81,45 @@ export default function DatabaseBridge() {
             continue;
           }
 
+          // Capture audio state BEFORE sending
+          const preSendState = getAudioStreamerState();
+
           // 1. Send text to model
           client.send([{ text: scriptedText }]);
           queueRef.current.shift();
 
-          // 2. Wait for Audio to START (Model processing time)
-          // Increased timeout to 10s to account for potential network/model latency
-          let audioStarted = false;
+          // 2. Wait for Audio to ARRIVE (Scheduled Time Increases)
+          // This confirms the model has responded and we have queued the audio.
+          // We wait up to 15 seconds for the response to start arriving.
           const waitStart = Date.now();
-          while (Date.now() - waitStart < 10000) {
-            if (isAudioPlayingRef.current) {
-              audioStarted = true;
-              break;
-            }
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-
-          // 3. Wait for Audio to FINISH (Playback time)
-          if (audioStarted) {
-             while (isAudioPlayingRef.current) {
-               await new Promise(resolve => setTimeout(resolve, 100));
+          let audioArrived = false;
+          while (Date.now() - waitStart < 15000) {
+             const currentState = getAudioStreamerState();
+             // Check if endOfQueueTime has increased by at least 100ms
+             if (currentState.endOfQueueTime > preSendState.endOfQueueTime + 0.1) {
+                audioArrived = true;
+                break;
              }
+             await new Promise(resolve => setTimeout(resolve, 100));
           }
 
-          // 4. Enforce 1 second gap after audio completes
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          if (!audioArrived) {
+            console.warn("Timeout waiting for audio response from model. Moving to next chunk.");
+            // We proceed to next chunk anyway to avoid stalling forever
+          }
+
+          // 3. Pipelining Wait: Wait until remaining audio duration is < 3 seconds
+          // This allows us to send the next request early, reducing the inter-paragraph gap.
+          while (true) {
+             const state = getAudioStreamerState();
+             // If audio queue is getting empty (less than 3s left), break to send next
+             // Also break if queue is completely empty (duration 0)
+             if (state.duration < 3.0) {
+                break;
+             }
+             await new Promise(resolve => setTimeout(resolve, 200));
+          }
         }
-
-        // Removed the '(stop)' signal here as it may disrupt continuous sessions or state.
-        // The model will simply wait for the next input.
-
       } catch (e) {
         console.error('Error in processing loop:', e);
       } finally {
@@ -198,7 +201,7 @@ export default function DatabaseBridge() {
       worker.terminate();
       supabase.removeChannel(channel);
     };
-  }, [connected, client, addTurn]); // Removed isAudioPlaying from deps to avoid loop restarts
+  }, [connected, client, addTurn, getAudioStreamerState]);
 
   return null;
 }

@@ -39,6 +39,7 @@ export type UseLiveApiResults = {
   isVolumeEnabled: boolean;
   setIsVolumeEnabled: (isEnabled: boolean) => void;
   isAudioPlaying: boolean;
+  getAudioStreamerState: () => { duration: number; endOfQueueTime: number };
 };
 
 export function useLiveApi({
@@ -217,6 +218,13 @@ export function useLiveApi({
     setConnected(false);
   }, [setConnected, client]);
 
+  const getAudioStreamerState = useCallback(() => {
+    return {
+      duration: audioStreamerRef.current?.duration || 0,
+      endOfQueueTime: audioStreamerRef.current?.endOfQueueTime || 0,
+    };
+  }, []);
+
   return {
     client,
     config,
@@ -228,5 +236,6 @@ export function useLiveApi({
     isVolumeEnabled,
     setIsVolumeEnabled,
     isAudioPlaying,
+    getAudioStreamerState,
   };
 }
