@@ -1,0 +1,7 @@
+{
+  "name": "orbits-trans",
+  "description": "An interactive sandbox",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
