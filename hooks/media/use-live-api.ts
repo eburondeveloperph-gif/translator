@@ -38,6 +38,7 @@ export type UseLiveApiResults = {
   volume: number;
   isVolumeEnabled: boolean;
   setIsVolumeEnabled: (isEnabled: boolean) => void;
+  isAudioPlaying: boolean;
 };
 
 export function useLiveApi({
@@ -52,6 +53,7 @@ export function useLiveApi({
 
   const [volume, setVolume] = useState(0);
   const [isVolumeEnabled, setIsVolumeEnabled] = useState(true);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [connected, setConnected] = useState(false);
   const [config, setConfig] = useState<LiveConnectConfig>({});
 
@@ -67,6 +69,10 @@ export function useLiveApi({
         if (backgroundPadEnabled) {
           audioStreamerRef.current.startPad(backgroundPadVolume);
         }
+
+        // Bind playback state callbacks
+        audioStreamerRef.current.onPlay = () => setIsAudioPlaying(true);
+        audioStreamerRef.current.onComplete = () => setIsAudioPlaying(false);
 
         audioStreamerRef.current
           .addWorklet<any>('vumeter-out', VolMeterWorket, (ev: any) => {
@@ -221,5 +227,6 @@ export function useLiveApi({
     volume,
     isVolumeEnabled,
     setIsVolumeEnabled,
+    isAudioPlaying,
   };
 }

@@ -17,22 +17,25 @@ const workerScript = `
 `;
 
 // Helper to segment text into natural reading chunks (Paragraphs)
-// The source data in Supabase is updated per paragraph, so we preserve that structure.
 const segmentText = (text: string): string[] => {
   if (!text) return [];
-  // Split by newlines (paragraph breaks) to define render tasks
-  // This ensures the model receives and renders the content paragraph by paragraph
   return text.split(/\r?\n+/).map(t => t.trim()).filter(t => t.length > 0);
 };
 
 export default function DatabaseBridge() {
-  const { client, connected } = useLiveAPIContext();
+  const { client, connected, isAudioPlaying } = useLiveAPIContext();
   const { addTurn } = useLogStore();
   const { voiceStyle, speechRate } = useSettings();
   
   const lastProcessedIdRef = useRef<string | null>(null);
   const paragraphCountRef = useRef<number>(0);
   
+  // Track audio state in a ref to access it inside the async loop
+  const isAudioPlayingRef = useRef(isAudioPlaying);
+  useEffect(() => {
+    isAudioPlayingRef.current = isAudioPlaying;
+  }, [isAudioPlaying]);
+
   const voiceStyleRef = useRef(voiceStyle);
   const speechRateRef = useRef(speechRate);
 
@@ -44,26 +47,24 @@ export default function DatabaseBridge() {
     speechRateRef.current = speechRate;
   }, [speechRate]);
 
-  // High-performance queue using Refs to handle data spikes without re-renders
+  // High-performance queue using Refs
   const queueRef = useRef<string[]>([]);
   const isProcessingRef = useRef(false);
 
   // Data Ingestion & Processing Logic
   useEffect(() => {
-    // DO NOT clear queue here. We want persistence if connection flickers.
     isProcessingRef.current = false;
 
     if (!connected) return;
 
-    // The consumer loop that processes the queue sequentially (AUDIO ONLY)
+    // The consumer loop that processes the queue sequentially (Closed Loop Control)
     const processQueueLoop = async () => {
       if (isProcessingRef.current) return;
       isProcessingRef.current = true;
 
       try {
-        // While there are items
         while (queueRef.current.length > 0) {
-          // Safety check: Abort processing if client disconnected mid-loop
+          // Safety check
           if (client.status !== 'connected') {
             isProcessingRef.current = false;
             return;
@@ -71,16 +72,9 @@ export default function DatabaseBridge() {
 
           const rawText = queueRef.current[0];
           const style = voiceStyleRef.current;
-          const rate = speechRateRef.current;
-
-          // Inject Stage Directions based on selected Style
-          let scriptedText = rawText;
           
-          // If the item is just the "(clears throat)" marker, pass it through directly
-          if (rawText === '(clears throat)') {
-             scriptedText = rawText; 
-          } else {
-             // Apply style directions to regular text
+          let scriptedText = rawText;
+          if (rawText !== '(clears throat)') {
              if (style === 'breathy') {
                scriptedText = `(soft inhale) ${rawText} ... (pause)`;
              } else if (style === 'dramatic') {
@@ -88,51 +82,39 @@ export default function DatabaseBridge() {
              }
           }
 
-          // Ensure we don't send empty strings which can break the API
           if (!scriptedText || !scriptedText.trim()) {
             queueRef.current.shift();
             continue;
           }
 
-          // NOTE: We do NOT addTurn here anymore. UI is handled in processNewData.
-          // This loop is purely for feeding audio to the model.
-
-          // Send to Gemini Live to read
-          // sending text implicitly acts as "continue reading"
+          // 1. Send text to model
           client.send([{ text: scriptedText }]);
-
-          // Remove the item we just sent
           queueRef.current.shift();
 
-          // Dynamic delay calculation for human-like pacing
-          let bufferTime = 1000;
-          let totalDelay = 1000;
-          
-          if (rawText === '(clears throat)') {
-            // Short delay for the throat clearing action
-            totalDelay = 1500; 
-          } else {
-            // Adjusted for paragraph-level reading
-            const wordCount = rawText.split(/\s+/).length;
-            const readTime = (wordCount / 3.0) * 1000; 
-            
-            // Buffer calculation based on style
-            let bufferBase = 1500; 
-            if (style === 'natural') bufferBase = 1000;
-            if (style === 'dramatic') bufferBase = 3000;
-            
-            // Calculate base delay
-            let baseDelay = Math.min(5000, readTime * 0.5) + bufferBase;
-            
-            // Adjust for reading speed (faster speed = less delay)
-            totalDelay = baseDelay / rate;
+          // 2. Wait for Audio to START (Model processing time)
+          // We wait up to 3000ms for audio to begin. If the model responds with silence 
+          // (e.g. "ok" or an action), we shouldn't hang forever.
+          let audioStarted = false;
+          const waitStart = Date.now();
+          while (Date.now() - waitStart < 3000) {
+            if (isAudioPlayingRef.current) {
+              audioStarted = true;
+              break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 50));
           }
-          
-          // Wait before processing next chunk
-          await new Promise(resolve => setTimeout(resolve, totalDelay));
+
+          // 3. Wait for Audio to FINISH (Playback time)
+          if (audioStarted) {
+             while (isAudioPlayingRef.current) {
+               await new Promise(resolve => setTimeout(resolve, 100));
+             }
+          }
+
+          // 4. Enforce 1 second gap after audio completes
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        // If queue is empty and we are still connected, send stop signal
         if (client.status === 'connected') {
           client.send([{ text: '(stop)' }]);
         }
@@ -144,26 +126,18 @@ export default function DatabaseBridge() {
       }
     };
 
-    // If there are pending items from before we connected, start processing immediately
     if (queueRef.current.length > 0) {
       processQueueLoop();
     }
 
     const processNewData = (data: Transcript) => {
-      // In the new table, we only have full_transcript_text (source).
-      // We rely on Gemini to translate it based on system prompt.
       const source = data.full_transcript_text;
-
       if (!data || !source) return;
 
-      if (lastProcessedIdRef.current === data.id) {
-        return;
-      }
-
+      if (lastProcessedIdRef.current === data.id) return;
       lastProcessedIdRef.current = data.id;
       
-      // 1. Instantly Update UI
-      // Display the full source text in the script view
+      // Update UI
       addTurn({
         role: 'system',
         text: source, 
@@ -171,23 +145,16 @@ export default function DatabaseBridge() {
         isFinal: true
       });
 
-      // 2. Queue for Audio Processing (Paragraph segments)
-      // Gemini will receive this text and translate/read it aloud paragraph by paragraph.
+      // Queue Paragraphs
       const segments = segmentText(source);
-      
       if (segments.length > 0) {
         segments.forEach(seg => {
            queueRef.current.push(seg);
-           
-           // Increment global paragraph counter
            paragraphCountRef.current += 1;
-           
-           // Every 3 paragraphs, inject 'clears throat'
            if (paragraphCountRef.current > 0 && paragraphCountRef.current % 3 === 0) {
               queueRef.current.push('(clears throat)');
            }
         });
-
         processQueueLoop();
       }
     };
@@ -205,7 +172,7 @@ export default function DatabaseBridge() {
       }
     };
 
-    // 1. Initialize Web Worker for background polling
+    // Initialize Web Worker for background polling
     const blob = new Blob([workerScript], { type: 'application/javascript' });
     const worker = new Worker(URL.createObjectURL(blob));
     worker.onmessage = () => {
@@ -213,8 +180,7 @@ export default function DatabaseBridge() {
     };
     worker.postMessage('start');
 
-    // 2. Setup Realtime Subscription
-    // Event listener for DB changes that triggers the prompt generation function
+    // Setup Realtime Subscription
     const channel = supabase
       .channel('bridge-realtime-opt')
       .on(
@@ -228,14 +194,13 @@ export default function DatabaseBridge() {
       )
       .subscribe();
 
-    // 3. Initial Fetch
     fetchLatest();
 
     return () => {
       worker.terminate();
       supabase.removeChannel(channel);
     };
-  }, [connected, client, addTurn]);
+  }, [connected, client, addTurn]); // Removed isAudioPlaying from deps to avoid loop restarts
 
   return null;
 }

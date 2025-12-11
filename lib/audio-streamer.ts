@@ -27,7 +27,7 @@ export class AudioStreamer {
   private sampleRate: number = 24000;
   private bufferSize: number = 7680;
   private audioQueue: Float32Array[] = [];
-  private isPlaying: boolean = false;
+  public isPlaying: boolean = false;
   private scheduledTime: number = 0;
   private initialBufferTime: number = 0.1;
   private checkTimeout: number | null = null;
@@ -45,6 +45,7 @@ export class AudioStreamer {
   private padFilter: BiquadFilterNode | null = null;
 
   public onComplete = () => {};
+  public onPlay = () => {};
 
   constructor(public context: AudioContext) {
     this.gainNode = this.context.createGain();
@@ -165,6 +166,7 @@ export class AudioStreamer {
     
     if (!this.isPlaying) {
       this.isPlaying = true;
+      this.onPlay(); // Notify listeners that playback has started
       // Reset scheduled time if it fell behind
       if (this.scheduledTime < this.context.currentTime) {
          this.scheduledTime = this.context.currentTime + this.initialBufferTime;
@@ -254,6 +256,7 @@ export class AudioStreamer {
     });
     this.activeSources.clear();
     this.scheduledTime = this.context.currentTime;
+    this.onComplete(); // Ensure state is reset
   }
 
   async resume() {
