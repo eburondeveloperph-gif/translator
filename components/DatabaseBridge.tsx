@@ -92,11 +92,10 @@ export default function DatabaseBridge() {
           queueRef.current.shift();
 
           // 2. Wait for Audio to START (Model processing time)
-          // We wait up to 3000ms for audio to begin. If the model responds with silence 
-          // (e.g. "ok" or an action), we shouldn't hang forever.
+          // Increased timeout to 10s to account for potential network/model latency
           let audioStarted = false;
           const waitStart = Date.now();
-          while (Date.now() - waitStart < 3000) {
+          while (Date.now() - waitStart < 10000) {
             if (isAudioPlayingRef.current) {
               audioStarted = true;
               break;
@@ -115,9 +114,8 @@ export default function DatabaseBridge() {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        if (client.status === 'connected') {
-          client.send([{ text: '(stop)' }]);
-        }
+        // Removed the '(stop)' signal here as it may disrupt continuous sessions or state.
+        // The model will simply wait for the next input.
 
       } catch (e) {
         console.error('Error in processing loop:', e);
