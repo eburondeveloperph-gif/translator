@@ -141,13 +141,25 @@ export default function Sidebar() {
 
               <div style={{marginBottom: '1rem'}}>
                 <label style={{display: 'block', marginBottom: '8px', fontSize: '0.85rem'}}>Voice Style</label>
-                <input
-                  type="text"
+                <select
                   value={voiceStyle}
-                  onChange={e => setVoiceStyle(e.target.value as any)}
-                  placeholder="e.g. Soft and engaging"
-                  style={{width: '100%'}}
-                />
+                  onChange={e => setVoiceStyle(e.target.value as VoiceStyle)}
+                  style={{
+                    appearance: 'none',
+                    backgroundImage: `var(--select-arrow)`,
+                    backgroundRepeat: 'no-repeat',
+                    backgroundPosition: 'right 12px center',
+                    backgroundSize: '1em',
+                    paddingRight: '30px'
+                  }}
+                >
+                  <option value="conversational">Conversational</option>
+                  <option value="formal">Formal</option>
+                  <option value="enthusiastic">Enthusiastic</option>
+                  <option value="natural">Natural</option>
+                  <option value="breathy">Breathy</option>
+                  <option value="dramatic">Dramatic</option>
+                </select>
               </div>
 
               <div>

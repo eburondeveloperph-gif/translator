@@ -26,6 +26,13 @@ export const DEFAULT_LIVE_API_MODEL =
 
 export const DEFAULT_VOICE = 'Orus';
 
+export const SPEAKER_VOICE_MAP: Record<string, string> = {
+  'Male 1': 'Puck',
+  'Male 2': 'Fenrir',
+  'Female 1': 'Nova',
+  'Female 2': 'Luna',
+};
+
 export const AVAILABLE_VOICES = [
   'Zephyr',
   'Puck',

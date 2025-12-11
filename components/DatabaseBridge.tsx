@@ -28,7 +28,7 @@ type QueueItem = {
 };
 
 export default function DatabaseBridge() {
-  const { client, connected, getAudioStreamerState } = useLiveAPIContext();
+  const { client, connected, getAudioStreamerState, sendToSpeaker, addOutputListener } = useLiveAPIContext();
   const { addTurn } = useLogStore();
   const { voiceStyle, speechRate, language } = useSettings();
   
@@ -55,16 +55,15 @@ export default function DatabaseBridge() {
   }, [language]);
 
   // Hook up listener to capture the model's spoken response text
+  // Using new multi-client listener
   useEffect(() => {
-    const handleOutputTranscription = (text: string, isFinal: boolean) => {
-      currentTranslationBufferRef.current += text;
-    };
-
-    client.on('outputTranscription', handleOutputTranscription);
+    const removeListener = addOutputListener((text: string, isFinal: boolean) => {
+       currentTranslationBufferRef.current += text;
+    });
     return () => {
-      client.off('outputTranscription', handleOutputTranscription);
+       removeListener();
     };
-  }, [client]);
+  }, [addOutputListener]);
 
   // High-performance queue using Refs
   const queueRef = useRef<QueueItem[]>([]);
@@ -91,14 +90,47 @@ export default function DatabaseBridge() {
 
           const item = queueRef.current[0];
           const rawText = item.text;
-          const style = voiceStyleRef.current;
           
-          let scriptedText = rawText;
-          if (rawText !== '(clears throat)') {
-             if (style === 'breathy') {
-               scriptedText = `(soft inhale) ${rawText} ... (pause)`;
-             } else if (style === 'dramatic') {
-                scriptedText = `(slowly) ${rawText} ... (long pause)`;
+          // Detect Speaker
+          let textToSend = rawText;
+          let targetSpeaker = 'default';
+          
+          if (rawText.startsWith('Male 1:')) {
+            targetSpeaker = 'Male 1';
+            textToSend = rawText.replace('Male 1:', '').trim();
+          } else if (rawText.startsWith('Male 2:')) {
+             targetSpeaker = 'Male 2';
+             textToSend = rawText.replace('Male 2:', '').trim();
+          } else if (rawText.startsWith('Female 1:')) {
+             targetSpeaker = 'Female 1';
+             textToSend = rawText.replace('Female 1:', '').trim();
+          } else if (rawText.startsWith('Female 2:')) {
+             targetSpeaker = 'Female 2';
+             textToSend = rawText.replace('Female 2:', '').trim();
+          }
+          
+          const style = voiceStyleRef.current;
+          let scriptedText = textToSend;
+          
+          // Apply Voice Style only to non-command text
+          if (textToSend !== '(clears throat)') {
+             switch (style) {
+               case 'breathy':
+                 scriptedText = `(soft inhale) ${textToSend} ... (pause)`;
+                 break;
+               case 'dramatic':
+                 scriptedText = `(slowly) ${textToSend} ... (long pause)`;
+                 break;
+               case 'enthusiastic':
+                 scriptedText = `(excitedly) ${textToSend}`;
+                 break;
+               case 'formal':
+                 scriptedText = `(professionally) ${textToSend}`;
+                 break;
+               case 'conversational':
+                 scriptedText = `(casually) ${textToSend}`;
+                 break;
+               // 'natural' adds no stage directions
              }
           }
 
@@ -113,18 +145,15 @@ export default function DatabaseBridge() {
           // Capture audio state BEFORE sending
           const preSendState = getAudioStreamerState();
 
-          // 1. Send text to model
-          client.send([{ text: scriptedText }]);
+          // 1. Send text to correct model
+          sendToSpeaker(scriptedText, targetSpeaker);
           queueRef.current.shift();
 
           // 2. Wait for Audio to ARRIVE (Scheduled Time Increases)
-          // This confirms the model has responded and we have queued the audio.
-          // We wait up to 15 seconds for the response to start arriving.
           const waitStart = Date.now();
           let audioArrived = false;
           while (Date.now() - waitStart < 15000) {
              const currentState = getAudioStreamerState();
-             // Check if endOfQueueTime has increased by at least 100ms
              if (currentState.endOfQueueTime > preSendState.endOfQueueTime + 0.1) {
                 audioArrived = true;
                 break;
@@ -134,15 +163,11 @@ export default function DatabaseBridge() {
 
           if (!audioArrived) {
             console.warn("Timeout waiting for audio response from model. Moving to next chunk.");
-            // We proceed to next chunk anyway to avoid stalling forever
           }
 
           // 3. Pipelining Wait: Wait until remaining audio duration is < 3 seconds
-          // This allows us to send the next request early, reducing the inter-paragraph gap.
           while (true) {
              const state = getAudioStreamerState();
-             // If audio queue is getting empty (less than 3s left), break to send next
-             // Also break if queue is completely empty (duration 0)
              if (state.duration < 3.0) {
                 break;
              }
@@ -150,15 +175,12 @@ export default function DatabaseBridge() {
           }
 
           // 4. Save Translation to Supabase
-          // We save whatever text we captured in the buffer during this processing window.
-          // Note: This relies on the outputTranscription arriving roughly while we wait for audio.
-          // Since we wait for audio to arrive + some playback time, we likely have the text.
           if (item.refData && currentTranslationBufferRef.current.trim().length > 0) {
             try {
               await supabase.from('translations').insert({
                 meeting_id: item.refData.session_id,
                 user_id: item.refData.user_id,
-                original_text: rawText, // Save the clean original text, not the scripted one
+                original_text: rawText, 
                 translated_text: currentTranslationBufferRef.current.trim(),
                 language: languageRef.current,
               });
@@ -249,7 +271,7 @@ export default function DatabaseBridge() {
       worker.terminate();
       supabase.removeChannel(channel);
     };
-  }, [connected, client, addTurn, getAudioStreamerState]);
+  }, [connected, client, addTurn, getAudioStreamerState, sendToSpeaker, addOutputListener]);
 
   return null;
 }

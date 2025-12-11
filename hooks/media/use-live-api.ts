@@ -25,6 +25,7 @@ import { AudioStreamer } from '../../lib/audio-streamer';
 import { audioContext } from '../../lib/utils';
 import VolMeterWorket from '../../lib/worklets/vol-meter';
 import { useLogStore, useSettings } from '@/lib/state';
+import { SPEAKER_VOICE_MAP } from '@/lib/constants';
 
 export type UseLiveApiResults = {
   client: GenAILiveClient;
@@ -40,6 +41,10 @@ export type UseLiveApiResults = {
   setIsVolumeEnabled: (isEnabled: boolean) => void;
   isAudioPlaying: boolean;
   getAudioStreamerState: () => { duration: number; endOfQueueTime: number };
+  
+  // Multi-speaker support
+  sendToSpeaker: (text: string, speaker: string) => void;
+  addOutputListener: (callback: (text: string, isFinal: boolean) => void) => () => void;
 };
 
 export function useLiveApi({
@@ -48,7 +53,15 @@ export function useLiveApi({
   apiKey: string;
 }): UseLiveApiResults {
   const { model, backgroundPadEnabled, backgroundPadVolume } = useSettings();
+  
+  // Main client (default voice/settings)
   const client = useMemo(() => new GenAILiveClient(apiKey, model), [apiKey, model]);
+  
+  // Dedicated Speaker Clients
+  const male1 = useMemo(() => new GenAILiveClient(apiKey, model), [apiKey, model]);
+  const male2 = useMemo(() => new GenAILiveClient(apiKey, model), [apiKey, model]);
+  const female1 = useMemo(() => new GenAILiveClient(apiKey, model), [apiKey, model]);
+  const female2 = useMemo(() => new GenAILiveClient(apiKey, model), [apiKey, model]);
 
   const audioStreamerRef = useRef<AudioStreamer | null>(null);
 
@@ -114,68 +127,51 @@ export function useLiveApi({
   }, [isVolumeEnabled]);
 
   useEffect(() => {
-    const onOpen = () => {
-      setConnected(true);
-    };
-
-    const onClose = () => {
-      setConnected(false);
-    };
-
+    const onOpen = () => setConnected(true);
+    const onClose = () => setConnected(false);
+    
+    // Stop streamer if main client is interrupted
     const stopAudioStreamer = () => {
       if (audioStreamerRef.current) {
         audioStreamerRef.current.stop();
       }
     };
 
+    // Centralized audio handler for all clients
     const onAudio = (data: ArrayBuffer) => {
       if (audioStreamerRef.current) {
         audioStreamerRef.current.addPCM16(new Uint8Array(data));
       }
     };
 
-    // Bind event listeners
+    // Bind event listeners to Main Client
     client.on('open', onOpen);
     client.on('close', onClose);
     client.on('interrupted', stopAudioStreamer);
     client.on('audio', onAudio);
 
+    // Bind audio listeners to Speaker Clients
+    male1.on('audio', onAudio);
+    male2.on('audio', onAudio);
+    female1.on('audio', onAudio);
+    female2.on('audio', onAudio);
+
+    // Note: We only attach tool call handlers to the main client for now to keep the demo simple,
+    // assuming complex interactions happen via the primary channel or tool logic is shared.
+    // However, basic TTS audio routing is enabled for all.
+    
+    // Only attaching tool handling to the main client for this demo scope
     const onToolCall = (toolCall: LiveServerToolCall) => {
       const functionResponses: any[] = [];
-
       for (const fc of toolCall.functionCalls) {
-        // Log the function call trigger
-        const triggerMessage = `Triggering function call: **${
-          fc.name
-        }**\n\`\`\`json\n${JSON.stringify(fc.args, null, 2)}\n\`\`\``;
-        useLogStore.getState().addTurn({
-          role: 'system',
-          text: triggerMessage,
-          isFinal: true,
-        });
-
-        // Prepare the response
-        functionResponses.push({
-          id: fc.id,
-          name: fc.name,
-          response: { result: 'ok' }, // simple, hard-coded function response
-        });
+        const triggerMessage = `Triggering function call: **${fc.name}**\n\`\`\`json\n${JSON.stringify(fc.args, null, 2)}\n\`\`\``;
+        useLogStore.getState().addTurn({ role: 'system', text: triggerMessage, isFinal: true });
+        functionResponses.push({ id: fc.id, name: fc.name, response: { result: 'ok' } });
       }
-
-      // Log the function call response
       if (functionResponses.length > 0) {
-        const responseMessage = `Function call response:\n\`\`\`json\n${JSON.stringify(
-          functionResponses,
-          null,
-          2,
-        )}\n\`\`\``;
-        useLogStore.getState().addTurn({
-          role: 'system',
-          text: responseMessage,
-          isFinal: true,
-        });
+        const responseMessage = `Function call response:\n\`\`\`json\n${JSON.stringify(functionResponses, null, 2)}\n\`\`\``;
+        useLogStore.getState().addTurn({ role: 'system', text: responseMessage, isFinal: true });
       }
-
       client.sendToolResponse({ functionResponses: functionResponses });
     };
 
@@ -188,20 +184,30 @@ export function useLiveApi({
       client.off('interrupted', stopAudioStreamer);
       client.off('audio', onAudio);
       client.off('toolcall', onToolCall);
+      
+      male1.off('audio', onAudio);
+      male2.off('audio', onAudio);
+      female1.off('audio', onAudio);
+      female2.off('audio', onAudio);
     };
-  }, [client]);
+  }, [client, male1, male2, female1, female2]);
 
   const connect = useCallback(async () => {
     if (!config) {
       throw new Error('config has not been set');
     }
-    client.disconnect();
     
-    // CRITICAL: Resume audio context to ensure playback works on mobile/desktop
+    // Disconnect all first
+    client.disconnect();
+    male1.disconnect();
+    male2.disconnect();
+    female1.disconnect();
+    female2.disconnect();
+    
+    // Resume audio context
     if (audioStreamerRef.current) {
       try {
         await audioStreamerRef.current.resume();
-        // Re-trigger pad if needed after resume
         if (backgroundPadEnabled) {
           audioStreamerRef.current.startPad(backgroundPadVolume);
         }
@@ -210,13 +216,37 @@ export function useLiveApi({
       }
     }
     
-    await client.connect(config);
-  }, [client, config, backgroundPadEnabled, backgroundPadVolume]);
+    // Create config helper
+    const getSpeakerConfig = (voiceName: string): LiveConnectConfig => ({
+      ...config,
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: voiceName
+          }
+        }
+      }
+    });
+
+    // Connect ALL clients
+    await Promise.all([
+      client.connect(config),
+      male1.connect(getSpeakerConfig(SPEAKER_VOICE_MAP['Male 1'])),
+      male2.connect(getSpeakerConfig(SPEAKER_VOICE_MAP['Male 2'])),
+      female1.connect(getSpeakerConfig(SPEAKER_VOICE_MAP['Female 1'])),
+      female2.connect(getSpeakerConfig(SPEAKER_VOICE_MAP['Female 2'])),
+    ]);
+
+  }, [client, male1, male2, female1, female2, config, backgroundPadEnabled, backgroundPadVolume]);
 
   const disconnect = useCallback(async () => {
     client.disconnect();
+    male1.disconnect();
+    male2.disconnect();
+    female1.disconnect();
+    female2.disconnect();
     setConnected(false);
-  }, [setConnected, client]);
+  }, [setConnected, client, male1, male2, female1, female2]);
 
   const getAudioStreamerState = useCallback(() => {
     return {
@@ -224,6 +254,45 @@ export function useLiveApi({
       endOfQueueTime: audioStreamerRef.current?.endOfQueueTime || 0,
     };
   }, []);
+
+  // Send text to specific speaker client
+  const sendToSpeaker = useCallback((text: string, speaker: string) => {
+    switch(speaker) {
+      case 'Male 1':
+        male1.send([{ text }]);
+        break;
+      case 'Male 2':
+        male2.send([{ text }]);
+        break;
+      case 'Female 1':
+        female1.send([{ text }]);
+        break;
+      case 'Female 2':
+        female2.send([{ text }]);
+        break;
+      default:
+        client.send([{ text }]);
+    }
+  }, [client, male1, male2, female1, female2]);
+
+  // Aggregate output listeners
+  const addOutputListener = useCallback((callback: (text: string, isFinal: boolean) => void) => {
+    const handler = (text: string, isFinal: boolean) => callback(text, isFinal);
+    
+    client.on('outputTranscription', handler);
+    male1.on('outputTranscription', handler);
+    male2.on('outputTranscription', handler);
+    female1.on('outputTranscription', handler);
+    female2.on('outputTranscription', handler);
+
+    return () => {
+      client.off('outputTranscription', handler);
+      male1.off('outputTranscription', handler);
+      male2.off('outputTranscription', handler);
+      female1.off('outputTranscription', handler);
+      female2.off('outputTranscription', handler);
+    };
+  }, [client, male1, male2, female1, female2]);
 
   return {
     client,
@@ -237,5 +306,7 @@ export function useLiveApi({
     setIsVolumeEnabled,
     isAudioPlaying,
     getAudioStreamerState,
+    sendToSpeaker,
+    addOutputListener,
   };
 }

@@ -12,14 +12,69 @@ import {
 
 export type Template = 'eburon-tts';
 export type Theme = 'light' | 'dark';
-export type VoiceStyle = 'natural' | 'breathy' | 'dramatic';
+export type VoiceStyle = 'natural' | 'conversational' | 'formal' | 'enthusiastic' | 'breathy' | 'dramatic';
 
-const generateSystemPrompt = (language: string, speed: number = 1.0) => {
+const generateSystemPrompt = (language: string, speed: number = 1.0, style: VoiceStyle = 'natural') => {
   let speedInstruction = "PACE: Natural, conversational speed.";
   if (speed < 1.0) {
     speedInstruction = `PACE: Slower than normal (${speed}x). Enunciate clearly and take your time.`;
   } else if (speed > 1.0) {
     speedInstruction = `PACE: Faster than normal (${speed}x). Speak quickly and efficiently.`;
+  }
+
+  let personaInstruction = "";
+  switch (style) {
+    case 'formal':
+      personaInstruction = `
+VOICE PERSONA (The Professional Anchor):
+- **Tone**: Objective, precise, clear, and composed.
+- **Diction**: Crisp articulation, avoiding slang or fillers.
+- **Rhythm**: Steady, even-paced, and authoritative.
+- **Attitude**: Professional, trustworthy, informative.
+`;
+      break;
+    case 'enthusiastic':
+      personaInstruction = `
+VOICE PERSONA (The Energetic Host):
+- **Tone**: Bright, high-energy, eager, and smiling.
+- **Dynamics**: Varied pitch to express excitement and positivity.
+- **Rhythm**: Upbeat and slightly faster, with punchy emphasis.
+- **Attitude**: Cheerful, motivating, engaging.
+`;
+      break;
+    case 'breathy':
+      personaInstruction = `
+VOICE PERSONA (The Intimate Storyteller):
+- **Tone**: Soft, airy, close-to-mic, and confidential.
+- **Dynamics**: Gentle whispers to soft speaking.
+- **Attitude**: Calm, soothing, mysterious.
+`;
+      break;
+    case 'dramatic':
+      personaInstruction = `
+VOICE PERSONA (The Movie Trailer Voice):
+- **Tone**: Deep, gravelly, epic, and suspenseful.
+- **Rhythm**: Slow, deliberate, with heavy pauses for effect.
+- **Attitude**: Serious, intense, cinematic.
+`;
+      break;
+    case 'conversational':
+      personaInstruction = `
+VOICE PERSONA (The Friendly Peer):
+- **Tone**: Warm, approachable, casual, and relaxed.
+- **Rhythm**: Natural, with colloquial phrasing and comfortable pauses.
+- **Attitude**: Friendly, chatty, relatable.
+`;
+      break;
+    case 'natural':
+    default:
+      personaInstruction = `
+VOICE PERSONA (The Balanced Speaker):
+- **Tone**: Clear, neutral but engaging, and human-like.
+- **Rhythm**: Standard conversational pace with natural breathing.
+- **Attitude**: Helpful, polite, present.
+`;
+      break;
   }
 
   return `
@@ -44,12 +99,10 @@ The input contains stage directions in parentheses () or brackets [].
 - If you read "(soft inhale)", you must BREATHE.
 - If you read "(clears throat)", you must make the sound of clearing your throat.
 - If you read "(pause)", you must WAIT.
-- If you read "(stop)", you must STOP speaking and enter standby mode.
+- If you read "(laugh)", you must chuckle naturally while speaking.
+- If you read "(excitedly)", inject energy into your voice.
 
-VOICE PERSONA (The Charismatic Orator):
-- **Dynamics**: Oscillate between a "soft, intense whisper" and a "powerful, projecting shout".
-- **Rhythm**: Use a "preaching cadence"—hypnotic, repetitive, and building in momentum.
-- **Tone**: High conviction, authoritative, urgent, yet deeply empathetic.
+${personaInstruction}
 
 Translate and perform the text now.
 `;
@@ -78,23 +131,26 @@ export const useSettings = create<{
 }>(set => ({
   language: 'Taglish (Philippines)',
   speechRate: 1.0,
-  systemPrompt: generateSystemPrompt('Taglish (Philippines)', 1.0),
+  voiceStyle: 'conversational',
+  systemPrompt: generateSystemPrompt('Taglish (Philippines)', 1.0, 'conversational'),
   model: DEFAULT_LIVE_API_MODEL,
   voice: DEFAULT_VOICE,
-  voiceStyle: 'breathy',
   backgroundPadEnabled: false,
   backgroundPadVolume: 0.2,
   setSystemPrompt: prompt => set({ systemPrompt: prompt }),
   setModel: model => set({ model }),
   setVoice: voice => set({ voice }),
-  setVoiceStyle: voiceStyle => set({ voiceStyle }),
+  setVoiceStyle: voiceStyle => set(state => ({ 
+    voiceStyle,
+    systemPrompt: generateSystemPrompt(state.language, state.speechRate, voiceStyle)
+  })),
   setLanguage: language => set(state => ({ 
     language, 
-    systemPrompt: generateSystemPrompt(language, state.speechRate) 
+    systemPrompt: generateSystemPrompt(language, state.speechRate, state.voiceStyle) 
   })),
   setSpeechRate: rate => set(state => ({ 
     speechRate: rate, 
-    systemPrompt: generateSystemPrompt(state.language, rate) 
+    systemPrompt: generateSystemPrompt(state.language, rate, state.voiceStyle) 
   })),
   setBackgroundPadEnabled: enabled => set({ backgroundPadEnabled: enabled }),
   setBackgroundPadVolume: volume => set({ backgroundPadVolume: volume }),
