@@ -85,7 +85,7 @@ export default function StreamingConsole() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const config: any = {
+    const config: LiveConnectConfig = {
       responseModalities: [Modality.AUDIO],
       speechConfig: {
         voiceConfig: {
@@ -94,15 +94,10 @@ export default function StreamingConsole() {
           },
         },
       },
-      inputAudioTranscription: {},
-      outputAudioTranscription: {},
-      systemInstruction: {
-        parts: [
-          {
-            text: systemPrompt,
-          },
-        ],
-      },
+      inputAudioTranscription: { model: "google_speech" },
+      outputAudioTranscription: { model: "google_speech" },
+      // Corrected: systemInstruction should be a string for live.connect
+      systemInstruction: systemPrompt, 
     };
 
     const enabledTools = tools
